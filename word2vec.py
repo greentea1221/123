@@ -12,6 +12,7 @@ from tqdm import tqdm
 ss = SnowballStemmer('english')
 sw = set(stopwords.words('english'))
 
+
 # JSON 파일을 읽고 데이터를 전처리하여 토큰화된 뉴스 기사 리스트를 반환
 def load_preprocessed_data(json_file):
     with open(json_file, 'r', encoding='utf-8') as file:
@@ -24,15 +25,16 @@ def load_preprocessed_data(json_file):
                 news_voca.extend(tokens)
     return news_voca
 
+
 # 문장을 전처리하여 토큰화된 단어 리스트를 반환
 def split_tokens(sentence):
     all_tokens = [ss.stem(token) for token in re.findall(r'\b[a-zA-Z@#]+\b', sentence.lower()) if
                   token not in sw and len(token) > 1]
     return all_tokens
 
+
 # 데이터를 로드하고 전처리하는 함수를 호출하여 토큰화
 news_voca = load_preprocessed_data('news_data.json')
-
 
 # 단어 빈도 계산
 counts = Counter(news_voca)
@@ -42,10 +44,12 @@ n_v = len(vocab)
 id2tok = dict(enumerate(vocab))
 tok2id = {token: id for id, token in id2tok.items()}
 
+
 # 빈도가 낮은 토큰을 제거
 def remove_rare_tokens(row):
     row = [t for t in row if t in vocab]
     return row
+
 
 dataset = remove_rare_tokens(news_voca)
 
@@ -56,21 +60,14 @@ def windowizer(row, wsize=3):
     out = []
     for i, wd in enumerate(doc):
         target = tok2id[wd]
-        window = [i + j for j in range(-wsize, wsize + 1, 1)
+        window = [i + j for j in range(-wsize, wsize + 1)
                   if (i + j >= 0) & (i + j < len(doc)) & (j != 0)]
         out += [(target, tok2id[doc[w]]) for w in window]
-    return row
+    return out
 
-window = windowizer(dataset)
 
-# 윈도우 크기 출력
-print("윈도우 크기:", 2 * 3)
+window = windowizer(dataset, wsize=1)
 
-# 단어 수 출력
-print("단어 수:", n_v)
-
-# 윈도우 수 출력
-print("윈도우 수:", len(window))
 
 # Word2Vec 데이터셋 생성
 class Word2VecDataset(Dataset):
@@ -84,18 +81,17 @@ class Word2VecDataset(Dataset):
     def __getitem__(self, idx):
         return self.data[idx]
 
+
 # 데이터 로더 초기화
-BATCH_SIZE = 2 ** 5
+BATCH_SIZE = 2 ** 14
 N_LOADER_PROCS = 10
-dataloader = {}
-for key, data in enumerate(dataset):
-    data_window = window[key]
-    dataloader[key] = DataLoader(
-        Word2VecDataset(vocab_size=n_v, window=data_window),
-        batch_size=BATCH_SIZE,
-        shuffle=True,
-        num_workers=N_LOADER_PROCS
-    )
+dataloader = DataLoader(
+    Word2VecDataset(vocab_size=n_v, window=window),
+    batch_size=BATCH_SIZE,
+    shuffle=True,
+    num_workers=N_LOADER_PROCS
+)
+
 
 # Word2Vec 모델 클래스
 class Word2Vec(nn.Module):
@@ -109,44 +105,7 @@ class Word2Vec(nn.Module):
         logits = self.expand(hidden)
         return logits
 
-# 모델 초기화
-EMBED_SIZE = 100
-model = Word2Vec(n_v, EMBED_SIZE)
-device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
-model.to(device)
 
-# 훈련 파라미터
-LR = 3e-4
-EPOCHS = 10
-loss_fn = nn.CrossEntropyLoss()
-optimizer = torch.optim.AdamW(model.parameters(), lr=LR)
-
-# 훈련 루프
-if __name__ == '__main__':
-    progress_bar = tqdm(range(EPOCHS * len(dataloader)))
-    running_loss = []
-    for epoch in range(EPOCHS):
-        epoch_loss = 0
-        for key, data_loader in enumerate(dataloader.values()):
-            for center, context in data_loader:
-                center, context = center.to(device), context.to(device)
-                optimizer.zero_grad()
-                logits = model(input=context)
-                loss = loss_fn(logits, center)
-                epoch_loss += loss.item()
-                loss.backward()
-                optimizer.step()
-                progress_bar.update(1)
-        epoch_loss /= len(dataloader)
-        running_loss.append(epoch_loss)
-
-# 학습된 임베딩
-wordvecs = model.expand.weight.cpu().detach().numpy()
-
-
-
-
-"""
 from scipy.spatial import distance
 import numpy as np
 
@@ -165,12 +124,40 @@ def get_k_similar_words(word, dist_matrix, k=10):
     return out
 
 
-dmat = get_distance_matrix(wordvecs, 'cosine')
-for word in tokens:
-    print(word, [t[1] for t in get_k_similar_words(word, dmat)], "\n")
+# 모델 초기화
+EMBED_SIZE = 100
+model = Word2Vec(n_v, EMBED_SIZE)
+device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
+model.to(device)
 
-wordvecs_100_epochs = model.expand.weight.cpu().detach().numpy()
-dmat_100_epochs = get_distance_matrix(wordvecs_100_epochs, 'cosine')
-for word in tokens:
-    print(word, [t[1] for t in get_k_similar_words(word, dmat_100_epochs)], "\n")
-"""
+# 훈련 파라미터
+LR = 3e-4
+EPOCHS = 100
+loss_fn = nn.CrossEntropyLoss()
+optimizer = torch.optim.AdamW(model.parameters(), lr=LR)
+
+if __name__ == '__main__':
+    progress_bar = tqdm(range(EPOCHS * len(dataloader)))
+    running_loss = []
+    for epoch in range(EPOCHS):
+        epoch_loss = 0
+        for center, context in dataloader:
+            center, context = center.to(device), context.to(device)
+            optimizer.zero_grad()
+            logits = model(input=context)
+            loss = loss_fn(logits, center)
+            epoch_loss += loss.item()
+            loss.backward()
+            optimizer.step()
+            progress_bar.update(1)
+        epoch_loss /= len(dataloader)
+        running_loss.append(epoch_loss)
+
+    print("\n")
+    # 학습된 임베딩
+    wordvecs = model.expand.weight.cpu().detach().numpy()
+    tokens = ['good', 'father', 'school', 'hate']
+
+    dmat = get_distance_matrix(wordvecs, 'cosine')
+    for word in tokens:
+        print(word, [t[1] for t in get_k_similar_words(word, dmat)], "\n")
