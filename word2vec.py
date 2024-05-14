@@ -33,6 +33,7 @@ def split_tokens(sentence):
 # 데이터를 로드하고 전처리하는 함수를 호출하여 토큰화
 news_voca = load_preprocessed_data('news_data.json')
 
+
 # 단어 빈도 계산
 counts = Counter(news_voca)
 counts = {k: v for k, v in counts.items() if v > 10}
@@ -48,19 +49,28 @@ def remove_rare_tokens(row):
 
 dataset = remove_rare_tokens(news_voca)
 
+
 # 윈도우 생성
 def windowizer(row, wsize=3):
     doc = row
     out = []
     for i, wd in enumerate(doc):
         target = tok2id[wd]
-        window = [i * j for j in range(-wsize, wsize + 1, 1)
-                  if (i * j >= 0) & (i * j < len(doc)) & (j != 0)]
+        window = [i + j for j in range(-wsize, wsize + 1, 1)
+                  if (i + j >= 0) & (i + j < len(doc)) & (j != 0)]
         out += [(target, tok2id[doc[w]]) for w in window]
-    row = out
     return row
 
 window = windowizer(dataset)
+
+# 윈도우 크기 출력
+print("윈도우 크기:", 2 * 3)
+
+# 단어 수 출력
+print("단어 수:", n_v)
+
+# 윈도우 수 출력
+print("윈도우 수:", len(window))
 
 # Word2Vec 데이터셋 생성
 class Word2VecDataset(Dataset):
